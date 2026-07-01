@@ -1,0 +1,474 @@
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>企业中Prometheus监控系统的使用原理及故障 | donggame6のblog</title><meta name="author" content="donggame6"><meta name="copyright" content="donggame6"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#f5f0fa"><meta name="description" content="文章介绍企业级如何采用Prometheus采用Pull拉取模式定时抓取各节点Exporter指标，数据如何存储，存储选择，依靠PromQL完成查询与告警推送，监控kuberbets集群业务，保证业务稳定运行不宕机，日常故障多集中于目标连通性异常、采集超时、存储区块损坏、规则配置错误及Grafana数据源对接失败。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="企业中Prometheus监控系统的使用原理及故障">
+<meta property="og:url" content="https://donggame6.github.io/posts/77f87abc/index.html">
+<meta property="og:site_name" content="donggame6のblog">
+<meta property="og:description" content="文章介绍企业级如何采用Prometheus采用Pull拉取模式定时抓取各节点Exporter指标，数据如何存储，存储选择，依靠PromQL完成查询与告警推送，监控kuberbets集群业务，保证业务稳定运行不宕机，日常故障多集中于目标连通性异常、采集超时、存储区块损坏、规则配置错误及Grafana数据源对接失败。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://donggame6.github.io/img/104.jpg">
+<meta property="article:published_time" content="2024-08-30T04:52:00.000Z">
+<meta property="article:modified_time" content="2024-10-15T15:00:00.000Z">
+<meta property="article:author" content="donggame6">
+<meta property="article:tag" content="prometheus">
+<meta property="article:tag" content="kubenetes">
+<meta property="article:tag" content="aletrmanager">
+<meta property="article:tag" content="pushgateway">
+<meta property="article:tag" content="prometheus-operator">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://donggame6.github.io/img/104.jpg"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "企业中Prometheus监控系统的使用原理及故障",
+  "url": "https://donggame6.github.io/posts/77f87abc/",
+  "image": "https://donggame6.github.io/img/104.jpg",
+  "datePublished": "2024-08-30T04:52:00.000Z",
+  "dateModified": "2024-10-15T15:00:00.000Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "donggame6",
+      "url": "https://donggame6.github.io/"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/01.png"><link rel="canonical" href="https://donggame6.github.io/posts/77f87abc/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"><link rel="preconnect" href="//fonts.googleapis.com" crossorigin><link rel="preconnect" href="//busuanzi.ibruce.info"><link rel="stylesheet" href="/css/index.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#2d0a3d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#f5f0fa')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chewy&amp;family=Ma+Shan+Zheng&amp;family=Fredoka+One&amp;display=swap" media="print" onload="this.media='all'"><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: {"path":"/search.xml","preload":"ture","top_n_per_article":1,"unescape":false,"pagination":{"enable":false,"hitsPerPage":8},"languages":{"hits_empty":"未找到符合您查询的内容：${query}","hits_stats":"共找到 ${hits} 篇文章"}},
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":400,"highlightFullpage":true,"highlightMacStyle":true},
+  copy: {
+    success: '复制成功',
+    error: '复制失败',
+    noSupport: '浏览器不支持'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '天',
+  dateSuffix: {
+    just: '刚刚',
+    min: '分钟前',
+    hour: '小时前',
+    day: '天前',
+    month: '个月前'
+  },
+  copyright: {"limitCount":300,"languages":{"author":"作者: donggame6","link":"链接: ","source":"来源: donggame6のblog","info":"著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。"}},
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid/dist/infinitegrid.min.js',
+    buttonText: '加载更多'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: true,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: '企业中Prometheus监控系统的使用原理及故障',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><link rel="stylesheet" href="/css/custom.css"><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"><link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Chewy&family=Fredoka+One&family=Caveat:wght@400;700&family=ZCOOL+KuaiLe&family=Noto+Sans+SC:wght@300;500;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/font-awesome/css/font-awesome.min.css"><!-- hexo injector head_end start --><link rel="stylesheet" href="/css/categorybar.css"><link rel="stylesheet" href="https://npm.elemecdn.com/hexo-butterfly-swiper/lib/swiper.min.css" media="print" onload="this.media='all'"><link rel="stylesheet" href="https://npm.elemecdn.com/hexo-butterfly-swiper/lib/swiperstyle.css" media="print" onload="this.media='all'"><!-- hexo injector head_end end --><meta name="generator" content="Hexo 7.3.0"></head><body><div class="bg-animation" id="web_bg" style="background-image: url(/img/03.png);"></div><div id="sidebar"><div id="menu-mask"></div><div id="sidebar-menus"><div class="avatar-img text-center"><img src="/img/02.jpg" onerror="this.onerror=null;this.src='/img/05.jpg'" alt="avatar"></div><div class="site-data text-center"><a href="/archives/"><div class="headline">文章</div><div class="length-num">6</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">13</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">7</div></a></div><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 归档</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/comments/"><i class="fa-fw fas fa-comments"></i><span> 留言板</span></a></div><div class="menus_item"><a class="site-page" href="/about/"><i class="fa-fw fas fa-user"></i><span> 关于</span></a></div></div></div></div><div class="post" id="body-wrap"><header class="post-bg fixed" id="page-header" style="background-image: url(/img/103.jpeg);"><nav id="nav"><!-- 左侧博客信息区域--><span id="blog-info"><a class="nav-site-title" href="/"><img class="site-icon" src="/img/01.png" alt="Logo"><span class="site-name">donggame6のblog</span></a><a class="nav-page-title" href="/"><span class="site-name">企业中Prometheus监控系统的使用原理及故障</span></a></span><!-- 新增的导航菜单容器（居中布局关键）--><div id="nav-menus-container"><!-- 菜单主体部分--><div id="menus"><!-- 搜索按钮--><div id="search-button"><span class="site-page social-icon search"><i class="fas fa-search fa-fw"></i><span> 搜索</span></span></div><!-- 菜单项--><div class="menus_items"><div class="menus_item"><a class="site-page" href="/"><i class="fa-fw fas fa-home"></i><span> 首页</span></a></div><div class="menus_item"><a class="site-page" href="/archives/"><i class="fa-fw fas fa-archive"></i><span> 归档</span></a></div><div class="menus_item"><a class="site-page" href="/categories/"><i class="fa-fw fas fa-folder-open"></i><span> 分类</span></a></div><div class="menus_item"><a class="site-page" href="/tags/"><i class="fa-fw fas fa-tags"></i><span> 标签</span></a></div><div class="menus_item"><a class="site-page" href="/comments/"><i class="fa-fw fas fa-comments"></i><span> 留言板</span></a></div><div class="menus_item"><a class="site-page" href="/about/"><i class="fa-fw fas fa-user"></i><span> 关于</span></a></div></div></div><!-- 移动端汉堡菜单按钮（保持原位置）--><div id="toggle-menu"><span class="site-page"><i class="fas fa-bars fa-fw"></i></span></div></div></nav><div id="post-info"><h1 class="post-title">企业中Prometheus监控系统的使用原理及故障</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">发表于</span><time class="post-meta-date-created" datetime="2024-08-30T04:52:00.000Z" title="发表于 2024-08-30 12:52:00">2024-08-30</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">更新于</span><time class="post-meta-date-updated" datetime="2024-10-15T15:00:00.000Z" title="更新于 2024-10-15 23:00:00">2024-10-15</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E7%9B%91%E6%8E%A7/">监控</a><i class="fas fa-angle-right post-meta-separator"></i><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E7%9B%91%E6%8E%A7/kubenetes/">kubenetes</a><i class="fas fa-angle-right post-meta-separator"></i><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E7%9B%91%E6%8E%A7/kubenetes/prometheus/">prometheus</a><i class="fas fa-angle-right post-meta-separator"></i><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E7%9B%91%E6%8E%A7/kubenetes/prometheus/docker/">docker</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-wordcount"><i class="far fa-file-word fa-fw post-meta-icon"></i><span class="post-meta-label">总字数:</span><span class="word-count">3.8k</span><span class="post-meta-separator">|</span><i class="far fa-clock fa-fw post-meta-icon"></i><span class="post-meta-label">阅读时长:</span><span>15分钟</span></span><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id data-flag-title><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">浏览量:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><div id="post-outdate-notice" data="{&quot;limitDay&quot;:365,&quot;messagePrev&quot;:&quot;本文最后更新于&quot;,&quot;messageNext&quot;:&quot;天前，部分内容可能已失效&quot;,&quot;postUpdate&quot;:&quot;2024-10-15 23:00:00&quot;}" hidden></div><h1 id="企业级Prometheus监控系统的使用原理及故障"><a href="#企业级Prometheus监控系统的使用原理及故障" class="headerlink" title="企业级Prometheus监控系统的使用原理及故障"></a>企业级Prometheus监控系统的使用原理及故障</h1><p>推荐阅读:</p>
+<pre><code>云原生CNCF官网:
+        https://landscape.cncf.io/
+Prometheus的GitHub地址:
+    https://github.com/prometheus/prometheus
+
+Prometheus的官网地址:
+    https://prometheus.io/
+</code></pre>
+<h2 id="一、监控原理及核心关注点"><a href="#一、监控原理及核心关注点" class="headerlink" title="一、监控原理及核心关注点"></a>一、监控原理及核心关注点</h2><ol>
+<li><h3 id="为什么要使用Prometheus"><a href="#为什么要使用Prometheus" class="headerlink" title="为什么要使用Prometheus"></a>为什么要使用Prometheus</h3><p>​    容器监控的实现对比虚拟机或者物理机来说有比较大的区别，比如容器在k8s环境中可以任意横向扩容与缩容，那么就需要监控服务能够自动对新创建的容器进行监控，当容器删除后又能及时的从监控服务中删除，而传统的zabbix的监控方式需要在每一个容器中安装并启动zabbix agent，并且在容器自动发现注册及模板关联方面并没有比较好的实现方式。</p>
+</li>
+<li><h3 id="Prometheus架构图解"><a href="#Prometheus架构图解" class="headerlink" title="Prometheus架构图解"></a>Prometheus架构图解</h3><p>参考地址:<br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://prometheus.io/docs/introduction/overview/">https://prometheus.io/docs/introduction/overview/</a><br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/prometheus/prometheus">https://github.com/prometheus/prometheus</a><br><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260630183512899.png?x-oss-process=style/water"></p>
+<p>3.1 包安装</p>
+<p>RHEL系统:<br>参考链接:<br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://packagecloud.io/app/prometheus-rpm/release/search">https://packagecloud.io/app/prometheus-rpm/release/search</a></p>
+<p>Ubuntu和Debian:<br>可以直接使用apt命令安装即可。</p>
+<p>3.2 二进制部署<br>参考链接:<br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://prometheus.io/download">https://prometheus.io/download</a></p>
+<p>3.3 基于docker部署</p>
+<p>参考链接:<br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://prometheus.io/docs/prometheus/latest/installation">https://prometheus.io/docs/prometheus/latest/installation</a></p>
+<p>3.4 基于kubernetes operator安装<br>参考链接:<br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/coreos/kube-prometheus">https://github.com/coreos/kube-prometheus</a></p>
+<p>3.5 手动部署prometheus server到K8S集群<br>需要编写资源清单文件 。</p>
+</li>
+</ol>
+<h2 id="二、监控组件的部署"><a href="#二、监控组件的部署" class="headerlink" title="二、监控组件的部署"></a>二、监控组件的部署</h2><p> 部署方式有多种,如上，按需选择。本章节主要介绍除包安装以外的其他部署方式。</p>
+<h3 id="1-二进制部署prometheus-server"><a href="#1-二进制部署prometheus-server" class="headerlink" title="1. 二进制部署prometheus-server"></a>1. 二进制部署prometheus-server</h3><p>本章节为参考案例，最好是用脚本一键启动</p>
+<h4 id="1-1-下载二进制包"><a href="#1-1-下载二进制包" class="headerlink" title="1.1 下载二进制包"></a>1.1 下载二进制包</h4><figure class="highlight plaintext"><figcaption><span>wiki</span></figcaption><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">wget https://github.com/prometheus/prometheus/releases/download/v2.45.1/prometheus-2.45.1.linux-amd64.tar.gz	</span><br></pre></td></tr></table></figure>
+
+<h4 id="1-2-创建工作目录解压及启动"><a href="#1-2-创建工作目录解压及启动" class="headerlink" title="1.2 创建工作目录解压及启动"></a>1.2 创建工作目录解压及启动</h4><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">1.创建目录及解压：</span><br><span class="line">[root@prometheus-server31 ~]# mkdir -pv /softwares</span><br><span class="line">[root@prometheus-server31 ~]# tar xf prometheus-2.45.1.linux-amd64.tar.gz -C /softwares/</span><br><span class="line">[root@prometheus-server31 ~]# </span><br><span class="line">[root@prometheus-server31 ~]# ll /softwares/</span><br><span class="line">total 0</span><br><span class="line">drwxr-xr-x 4 1001 127 132 Sep 30 05:46 prometheus-2.45.1.linux-amd64</span><br><span class="line">[root@prometheus-server31 ~]# </span><br><span class="line"></span><br><span class="line">2.进入到prometheus的安装目录</span><br><span class="line">[root@prometheus-server31 ~]# cd/softwares/prometheus-2.45.1.linux-amd64/</span><br><span class="line">[root@prometheus-server31 prometheus-2.45.1.linux-amd64]# </span><br><span class="line"></span><br><span class="line">3.启动prometheus服务</span><br><span class="line">root@prometheus-server31 prometheus-2.45.1.linux-amd64]# ./prometheus </span><br><span class="line"></span><br><span class="line">4.访问prometheus的WebUI</span><br><span class="line">http://10.0.0.31:9090/  即可正常看到web界面</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260701000744516.png?x-oss-process=style/water"></p>
+<h4 id="1-3-设置为开机自启"><a href="#1-3-设置为开机自启" class="headerlink" title="1.3 设置为开机自启"></a>1.3 设置为开机自启</h4><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br></pre></td><td class="code"><pre><span class="line">1.创建符号链接</span><br><span class="line">[root@prometheus-server31 ~]# ln -sv/softwares/prometheus-2.45.1.linux-amd64/softwares/prometheus</span><br><span class="line">2.配置解析---按项目需求配置即可</span><br><span class="line">cat &gt;&gt; /etc/hosts &lt;&lt;EOF</span><br><span class="line">10.0.0.31   prometheus-server31	</span><br><span class="line">10.0.0.32   prometheus-server32	</span><br><span class="line">10.0.0.33   prometheus-server33	</span><br><span class="line">10.0.0.41   prometheus-node41	</span><br><span class="line">10.0.0.42   prometheus-node42	</span><br><span class="line">10.0.0.43   prometheus-node43	</span><br><span class="line">10.0.0.51   alermanager51		</span><br><span class="line">10.0.0.61   pushgateway61		</span><br><span class="line">10.0.0.71   grafana71			</span><br><span class="line">10.0.0.81   victoria81			</span><br><span class="line">10.0.0.82   victoria82			</span><br><span class="line">10.0.0.83   victoria83			</span><br><span class="line">EOF</span><br><span class="line">3.编写启动脚本---指定监听端口，目录即可，优化配置后直接systemctl启动</span><br><span class="line">cat &gt; /etc/systemd/system/prometheus-server.service &lt;&lt; EOF</span><br><span class="line">[Unit]</span><br><span class="line">Description= Linux  Prometheus Server</span><br><span class="line">Documentation=https://prometheus.io/docs/introduction/overview/</span><br><span class="line">After=network.target</span><br><span class="line">[Service]</span><br><span class="line">Restart=on-failure</span><br><span class="line">ExecStart=/softwares/prometheus/prometheus \</span><br><span class="line">    --config.file=/softwares/prometheus/prometheus.yml \</span><br><span class="line">	--web.listen-address=0.0.0.0:9090 \</span><br><span class="line">    --web.enable-lifecycle \</span><br><span class="line">	--log.format=json</span><br><span class="line">ExecReload=/bin/kill -HUP $MAINPID</span><br><span class="line">LimitNOFILE=65535</span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line">EOF</span><br><span class="line"></span><br><span class="line">4.将服务设置开机自启动</span><br><span class="line">systemctl daemon-reload</span><br><span class="line">systemctl enable --now prometheus-server</span><br><span class="line">ss -ntl</span><br><span class="line"></span><br><span class="line">5. 使用systemctl进行重载</span><br><span class="line">systemctl reload prometheus-server</span><br><span class="line">6. 使用API请求重载(要求启动服务时开启&quot;--web.enable-lifecycle &quot;参数)</span><br><span class="line"></span><br><span class="line">curl -X POST http://10.0.0.31:9090/-/reload</span><br></pre></td></tr></table></figure>
+
+<p>   最好是写成脚本，一键部署启动（一键部署prometheus server启动脚本）—企业通用，自行编写</p>
+<h3 id="2-docker一键部署prometheus-server–步骤类似"><a href="#2-docker一键部署prometheus-server–步骤类似" class="headerlink" title="2. docker一键部署prometheus server–步骤类似"></a>2. docker一键部署prometheus server–步骤类似</h3><p>自行编写–基于docker-compose安装(按项目需求)</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">- 1.安装docker</span><br><span class="line">  [root@prometheus-server33 ~]# wget http://github.com/docker/docker-compose-binary-install.tar.gz</span><br><span class="line">  [root@prometheus-server33 ~]# </span><br><span class="line">  [root@prometheus-server33 ~]# tar xf docker-compose-binary-install.tar.gz </span><br><span class="line">  [root@prometheus-server33 ~]# </span><br><span class="line">  [root@prometheus-server33 ~]# ./install-docker.sh install</span><br><span class="line">  </span><br><span class="line">2.基于docker部署prometheus-server</span><br><span class="line">[root@prometheus-server33 ~]# docker run -p 19090:9090 -d --name prometheus-server prom/prometheus-linux-amd64:v2.45.1</span><br><span class="line"></span><br><span class="line">3.访问WebUI</span><br><span class="line">http://10.0.0.33:19090/</span><br></pre></td></tr></table></figure>
+
+<h3 id="3-二进制部署node-exporter-以下不在详细输出，与server端同理。"><a href="#3-二进制部署node-exporter-以下不在详细输出，与server端同理。" class="headerlink" title="3. 二进制部署node-exporter-以下不在详细输出，与server端同理。"></a>3. 二进制部署node-exporter-以下不在详细输出，与server端同理。</h3><p>也可写成脚本，脚本一键部署node-exporter—通用</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">部署完成后访问node-exporter的WebUI</span><br><span class="line">http://10.0.0.41:9100/metrics</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260701001322340.png?x-oss-process=style/water"></p>
+<h3 id="4-基于docker部署node-exporter"><a href="#4-基于docker部署node-exporter" class="headerlink" title="4. 基于docker部署node-exporter"></a>4. 基于docker部署node-exporter</h3><p>​	安装docker环境—参考上面的内容即可</p>
+<pre><code>1.安装docker环境---参考上面的内容即可
+2.运行node-exporter容器
+
+[root@prometheus-node43 ~]# docker  run -d  -p 19100:9100 --restart always --name node-exporter prom/node-exporter:v1.6.1
+
+3.访问测试
+http://10.0.0.43:19100/metrics
+</code></pre>
+<h3 id="5-prometheus-server监控node-exporter"><a href="#5-prometheus-server监控node-exporter" class="headerlink" title="5. prometheus-server监控node-exporter"></a>5. prometheus-server监控node-exporter</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"> 1.进入prometheus的安装目录</span><br><span class="line">  [root@prometheus-server31 ~]# cd /prometheus</span><br><span class="line">  [root@prometheus-server31 prometheus]# </span><br><span class="line">  </span><br><span class="line">2.修改prometheus的配置文件</span><br><span class="line">[root@prometheus-server31 prometheus]# vim prometheus.yml </span><br><span class="line">...</span><br><span class="line">scrape_configs:</span><br><span class="line">  ...</span><br><span class="line">  - job_name: &quot;node-exporter&quot;</span><br><span class="line">    static_configs:</span><br><span class="line">    - targets:</span><br><span class="line">      - 10.0.0.41:9100</span><br><span class="line">      - 10.0.0.42:9100</span><br><span class="line">      - 10.0.0.43:9100</span><br><span class="line"></span><br><span class="line">    3.重新加载配置</span><br><span class="line">    [root@prometheus-server31 prometheus]# curl -X POST 10.0.0.31:9090/-/reload</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260701000516770.png?x-oss-process=style/water"></p>
+<p>prometheus-server监控node-exporter图示–生产环境按需配置即可。</p>
+<p><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260630195702124.png?x-oss-process=style/water"></p>
+<p><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260630195942815.png?x-oss-process=style/water"></p>
+<h2 id="三、PromQL的常用函数，常用服务监控，服务发现及配置联邦模式"><a href="#三、PromQL的常用函数，常用服务监控，服务发现及配置联邦模式" class="headerlink" title="三、PromQL的常用函数，常用服务监控，服务发现及配置联邦模式"></a>三、PromQL的常用函数，常用服务监控，服务发现及配置联邦模式</h2><h3 id="1-PromQL的常用函数"><a href="#1-PromQL的常用函数" class="headerlink" title="1.PromQL的常用函数"></a>1.PromQL的常用函数</h3><p>推荐阅读:<br>	<a target="_blank" rel="external nofollow noopener noreferrer" href="https://prometheus.io/docs/prometheus/latest/querying/functions/">https://prometheus.io/docs/prometheus/latest/querying/functions/</a></p>
+<p>例如：       sum(increase(node_cpu_seconds_total{mode&#x3D;”idle”,cpu&#x3D;”0”}[1m]))<br>		统计1分钟内，使用标签过滤器查看所有节点的第0颗CPU，空闲状态使用的总时间增量，并将返回结果累加。</p>
+<p><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260701003613565.png?x-oss-process=style/water"></p>
+<p>grafana是一个图形化展示工具，可以直接连接prometheus server，支持基于PromQL语法进行数据查询。</p>
+<p>​    部署完成之后配置grafana的数据源为prometheus，，并导入node-exporter模板，官网模板很多，选择相应的模板ID，查看导入后的模板ID的dashboard即可</p>
+<p><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260701012505049.png?x-oss-process=style/water"></p>
+<h3 id="2-常用服务监控（zookeeper，kafka集群-ElasticSearch集群，nginx-redis-tomcat…"><a href="#2-常用服务监控（zookeeper，kafka集群-ElasticSearch集群，nginx-redis-tomcat…" class="headerlink" title="2. 常用服务监控（zookeeper，kafka集群,ElasticSearch集群，nginx,redis,tomcat…)"></a>2. 常用服务监控（zookeeper，kafka集群,ElasticSearch集群，nginx,redis,tomcat…)</h3><ol>
+<li><p>以mysql服务为例-prometheus监控MySQL环境</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br></pre></td><td class="code"><pre><span class="line">1.prometheus监控MySQL环境</span><br><span class="line">1.1 部署MySQL环境</span><br><span class="line">1.1.1 配置MySQL软件源 </span><br><span class="line">wget  https://dev.mysql.com/get/mysql80-community-release-el7-9.noarch.rpm</span><br><span class="line">rpm -ivh mysql80-community-release-el7-9.noarch.rpm</span><br><span class="line"></span><br><span class="line">1.1.2 安装MySQL</span><br><span class="line">yum -y install mysql-community-server</span><br><span class="line"></span><br><span class="line">1.1.3 启动数据库</span><br><span class="line">systemctl enable --now mysqld</span><br><span class="line"></span><br><span class="line">1.1.4 查看MySQL默认的初始化密码</span><br><span class="line">[root@prometheus-node41 ~]# grep &#x27;temporary password&#x27; /var/log/mysqld.log</span><br><span class="line">2023-11-10T06:55:49.959249Z 6 [Note] [MY-010454] [Server] A temporary password is generated for root@localhost: k0?t*:::z)Vx</span><br><span class="line">[root@prometheus-node41 ~]# mysql</span><br><span class="line">ERROR 1045 (28000): Access denied for user &#x27;root&#x27;@&#x27;localhost&#x27; (using password: NO)</span><br><span class="line">[root@prometheus-node41 ~]# </span><br><span class="line">[root@prometheus-node41 ~]# mysql -p</span><br><span class="line">Enter password: </span><br><span class="line">Welcome to the MySQL monitor.  Commands end with ; or \g.</span><br><span class="line">Your MySQL connection id is 9</span><br><span class="line">Server version: 8.0.35</span><br><span class="line">Copyright (c) 2000, 2023, Oracle and/or its affiliates.</span><br><span class="line">Oracle is a registered trademark of Oracle Corporation and/or its</span><br><span class="line">affiliates. Other names may be trademarks of their respective</span><br><span class="line">owners.</span><br><span class="line">Type &#x27;help;&#x27; or &#x27;\h&#x27; for help. Type &#x27;\c&#x27; to clear the current input statement.</span><br><span class="line">mysql&gt; </span><br><span class="line"></span><br><span class="line">1.1.5 修改MySQL的默认密码</span><br><span class="line">ALTER USER USER() IDENTIFIED BY &#x27;mysql@2023MySQL&#x27;;</span><br><span class="line">SHOW VARIABLES LIKE &#x27;%validate_password.policy%&#x27;;</span><br><span class="line">SET GLOBAL validate_password.policy=0; -- 修改策略模式</span><br><span class="line">SHOW VARIABLES LIKE &#x27;%validate_password.policy%&#x27;;</span><br><span class="line">ALTER USER USER() IDENTIFIED BY &#x27;mysql&#x27;;</span><br><span class="line">QUIT</span><br><span class="line">mysql -pxxxxxx</span><br><span class="line">1.1.6 创建mysqld-exporter的授权用户</span><br><span class="line">CREATE USER &#x27;mysql_exporter&#x27;@&#x27;localhost&#x27;  IDENTIFIED WITH mysql_native_password BY &#x27;mysql&#x27; WITH MAX_USER_CONNECTIONS 3;</span><br><span class="line">GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO &#x27;mysql_exporter&#x27;@&#x27;localhost&#x27;;</span><br><span class="line">QUIT</span><br><span class="line">mysql -umysql_exporter -pmysql</span><br><span class="line"></span><br><span class="line">1.2  部署myqld-exporter</span><br><span class="line">1.2.1 下载mysqld-exporter</span><br><span class="line">wget  https://github.com/prometheus/mysqld_exporter/releases/download/v0.15.0/mysqld_exporter-0.15.0.linux-amd64.tar.gz</span><br><span class="line"></span><br><span class="line">1.2.2 解压软件包</span><br><span class="line">tar xf mysqld_exporter-0.15.0.linux-amd64.tar.gz -C /usr/local/bin/ mysqld_exporter-0.15.0.linux-amd64/mysqld_exporter  --strip-components=1</span><br><span class="line"></span><br><span class="line">1.2.3 创建MySQL的配置，指定默认的用户名和密码</span><br><span class="line">cat &gt; /root/.my.cnf &lt;&lt;EOF</span><br><span class="line">[client]</span><br><span class="line">user=mysql_exporter</span><br><span class="line">password=mysql</span><br><span class="line">EOF</span><br><span class="line"></span><br><span class="line">1.2.4 运行mysqld-exporter</span><br><span class="line">mysqld_exporter</span><br><span class="line"></span><br><span class="line">1.2.5 访问mysqld_exporter的webUI</span><br><span class="line"></span><br><span class="line">1.3 配置prometheus采集mysqld_exporter数据</span><br><span class="line">1.3.1 修改配置文件</span><br><span class="line">vim /softwares/prometheus/prometheus.yml</span><br><span class="line">...</span><br><span class="line">scrape_configs:</span><br><span class="line">  ...</span><br><span class="line">  - job_name: &quot;mysql-exporter&quot;</span><br><span class="line">    static_configs:</span><br><span class="line">      - targets:</span><br><span class="line">          - &quot;10.0.0.102:9104&quot;</span><br><span class="line"></span><br><span class="line">1.3.2 重载配置文件</span><br><span class="line">curl -X POST http://10.0.0.31:9090/-/reload</span><br><span class="line"></span><br><span class="line">1.3.3 导入grafana的模板ID即可</span><br><span class="line">17320 </span><br><span class="line">18949  </span><br><span class="line">14057</span><br></pre></td></tr></table></figure></li>
+</ol>
+<p><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260701011901767.png?x-oss-process=style/water"></p>
+<h3 id="3-配置服务发现"><a href="#3-配置服务发现" class="headerlink" title="3. 配置服务发现"></a>3. 配置服务发现</h3><ol>
+<li><p>基于文件的服务发现–简单来说，就是将监控的targets定义在文件里</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">2.2 修改prometheus的配置文件</span><br><span class="line">vim /oldboyedu/softwares/prometheus/prometheus.yml</span><br><span class="line">...</span><br><span class="line">scrape_configs:</span><br><span class="line">  ...</span><br><span class="line">  - job_name: &quot;file-sd-config&quot;</span><br><span class="line">    file_sd_configs:</span><br><span class="line">    - files:</span><br><span class="line">      - /softwares/prometheus/file-sd.json</span><br><span class="line">      - /softwares/prometheus/file-sd.yaml</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>基于consul服务实现自动发现，需要安装consul服务</p>
+<p>官网地址:<br><a target="_blank" rel="external nofollow noopener noreferrer" href="https://www.consul.io/">https://www.consul.io/</a></p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line">vim /oldboyedu/softwares/prometheus/prometheus.yml</span><br><span class="line">...</span><br><span class="line">scrape_configs:</span><br><span class="line">  ...</span><br><span class="line">  - job_name: &quot;consul-seriver-discovery&quot;</span><br><span class="line">    # 配置基于consul的服务发现</span><br><span class="line">    consul_sd_configs:</span><br><span class="line">        # 指定consul的服务器地址，若不指定，则默认值为&quot;localhost:8500&quot;.</span><br><span class="line">      - server: 10.0.0.43:8500</span><br><span class="line">      - server: 10.0.0.42:8500</span><br><span class="line">      - server: 10.0.0.41:8500</span><br><span class="line">    relabel_configs:</span><br><span class="line">        # 匹配consul的源标签字段，表示服务名称</span><br><span class="line">      - source_labels: [__meta_consul_service]</span><br><span class="line">        # 指定源标签的正则表达式，若不定义，默认值为&quot;(.*)&quot;</span><br><span class="line">        regex: consul</span><br><span class="line">        # 执行动作为删除，默认值为&quot;replace&quot;,有效值: replace, keep, and drop</span><br><span class="line">        action: drop</span><br><span class="line">        </span><br><span class="line">注册节点：</span><br><span class="line">curl -X PUT -d &#x27;&#123;&quot;id&quot;:&quot;prometheus-node42&quot;,&quot;name&quot;:&quot;prometheus-node42&quot;,&quot;address&quot;:&quot;10.0.0.42&quot;,&quot;port&quot;:9100,&quot;tags&quot;:[&quot;node-exporter&quot;],&quot;checks&quot;: [&#123;&quot;http&quot;:&quot;http://10.0.0.42:9100&quot;,&quot;interval&quot;:&quot;5m&quot;&#125;]&#125;&#x27; http://10.0.0.43:8500/v1/agent/service/register</span><br><span class="line">注意：</span><br><span class="line">TODO---&gt; 目前有个坑:</span><br><span class="line">	你注册时找得哪个节点，那么注销时也要找这个节点注销，...</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h3 id="4-配置联邦模式"><a href="#4-配置联邦模式" class="headerlink" title="4.配置联邦模式"></a>4.配置联邦模式</h3><p>默认情况下，prometheus采集的数据会存储到本地，这意味者prometheus在这种工作模式下，可能会存在单机存储的瓶颈。未来解决prometheus对于数据的采集压力，我们可以采用联邦模式来部署prometheus</p>
+<p>多个node节点基于标签去匹配</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">- job_name: &quot;prometheus-federate-32&quot;</span><br><span class="line">  metrics_path: &quot;/federate&quot;</span><br><span class="line">  # 用于解决标签的冲突问题，有效值为: true和false，默认值为false</span><br><span class="line">  # 当设置为true时，将保留抓取的标签以忽略服务器自身的标签。说白了会覆盖原有标签。</span><br><span class="line">  # 当设置为false时，则不会覆盖原有标签，而是在标点前加了一个&quot;exported_&quot;前缀。</span><br><span class="line">  honor_labels: true</span><br><span class="line">  params:</span><br><span class="line">     &quot;match[]&quot;:</span><br><span class="line">     - &#x27;&#123;job=&quot;promethues&quot;&#125;&#x27;</span><br><span class="line">     - &#x27;&#123;__name__=~&quot;job:.*&quot;&#125;&#x27;</span><br><span class="line">     - &#x27;&#123;__name__=~&quot;node.*&quot;&#125;&#x27;</span><br></pre></td></tr></table></figure>
+
+<h2 id="五、prometheus本地存储和远端存储，pushgateway和altermanager"><a href="#五、prometheus本地存储和远端存储，pushgateway和altermanager" class="headerlink" title="五、prometheus本地存储和远端存储，pushgateway和altermanager"></a>五、prometheus本地存储和远端存储，pushgateway和altermanager</h2><h4 id="1-本地存储：启动脚本中定义所需要的参数即可。"><a href="#1-本地存储：启动脚本中定义所需要的参数即可。" class="headerlink" title="1. 本地存储：启动脚本中定义所需要的参数即可。"></a>1. 本地存储：启动脚本中定义所需要的参数即可。</h4><h4 id="2-远端存储：VictoriaMetrics"><a href="#2-远端存储：VictoriaMetrics" class="headerlink" title="2.远端存储：VictoriaMetrics"></a>2.远端存储：VictoriaMetrics</h4><p>官方文档:<br>	<a target="_blank" rel="external nofollow noopener noreferrer" href="https://docs.victoriametrics.com/">https://docs.victoriametrics.com/</a></p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">下载安装端口访问，server端配置文件顶级字段中配置访问的url，granfana导入ID配置出图展示即可。</span><br></pre></td></tr></table></figure>
+
+<h4 id="3-pushgateway组件"><a href="#3-pushgateway组件" class="headerlink" title="3.pushgateway组件"></a>3.pushgateway组件</h4><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">1.安装pushgateway--官网安装即可，编写启动脚本启动</span><br><span class="line">2.自定义监控指标--以tcp的12种状态为例（可编写脚本一键启动测试，也可设置定时任务实时查看）</span><br><span class="line">3.grafana监控如上。</span><br></pre></td></tr></table></figure>
+
+<h4 id="4-altermanager-组件"><a href="#4-altermanager-组件" class="headerlink" title="4.altermanager 组件"></a>4.altermanager 组件</h4><p>目前支持多种告警媒介，包括但不限于邮件告警，钉钉告警，企业微信告警等。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">1.安装步骤如上-下载安装，配置告警媒介参数，启动</span><br><span class="line">2.服务端配置告警规则，页面测试。</span><br></pre></td></tr></table></figure>
+
+<h2 id="六、prometueus-operator监控k8s集群"><a href="#六、prometueus-operator监控k8s集群" class="headerlink" title="六、prometueus-operator监控k8s集群"></a>六、prometueus-operator监控k8s集群</h2><p>prometheus-operator可以一键实现对K8S集群的监控。</p>
+<p>参考地址:<br>	<a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/prometheus-operator/kube-prometheus#compatibility">https://github.com/prometheus-operator/kube-prometheus#compatibility</a></p>
+<p>GitHub地址:<br>	<a target="_blank" rel="external nofollow noopener noreferrer" href="https://github.com/prometheus-operator/kube-prometheus">https://github.com/prometheus-operator/kube-prometheus</a></p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br></pre></td><td class="code"><pre><span class="line">1.在K8S集群部署prometheus</span><br><span class="line">1.1 基于K8S版本选择合适的prometheus-operator</span><br><span class="line">依旧三步走：下载-解压-进入主目录</span><br><span class="line">1.2切换工作目录，进入到prometheus-operator主目录</span><br><span class="line">cd kube-prometheus-0.11.0/</span><br><span class="line"></span><br><span class="line">1.3 安装自定义资源</span><br><span class="line">1.3.1 下载镜像并修改文件,下载本地可推送至harbor仓库，方便后续使用，提高效率。</span><br><span class="line">docker pull k8s.gcr.io/prometheus-adapter/prometheus-adapter:v0.9.1</span><br><span class="line">docker pull  k8s.gcr.io/kube-state-metrics/kube-state-metrics:v2.5.0</span><br><span class="line"></span><br><span class="line">修改资源清单配置文件：</span><br><span class="line">vim manifests/prometheusAdapter-deployment.yaml</span><br><span class="line">......</span><br><span class="line">        # image: k8s.gcr.io/prometheus-adapter/prometheus-adapter:v0.9.1</span><br><span class="line">...</span><br><span class="line"></span><br><span class="line">vim manifests/kubeStateMetrics-deployment.yaml</span><br><span class="line">...</span><br><span class="line">        # image: k8s.gcr.io/kube-state-metrics/kube-state-metrics:v2.5.0</span><br><span class="line"></span><br><span class="line">vim manifests/grafana-service.yaml</span><br><span class="line">....</span><br><span class="line">spec:</span><br><span class="line">  type: NodePort</span><br><span class="line">  ports:</span><br><span class="line">  - name: http</span><br><span class="line">    port: 3000</span><br><span class="line">    targetPort: http</span><br><span class="line">    nodePort: 30080</span><br><span class="line"></span><br><span class="line">vim manifests/prometheus-service.yaml</span><br><span class="line">....</span><br><span class="line">spec:</span><br><span class="line">  type: NodePort</span><br><span class="line">  ports:</span><br><span class="line">  - name: web</span><br><span class="line">    port: 9090</span><br><span class="line">    targetPort: web</span><br><span class="line">    nodePort: 30090</span><br><span class="line"></span><br><span class="line">2.部署服务</span><br><span class="line">kubectl apply --server-side -f manifests/setup</span><br><span class="line">kubectl wait \</span><br><span class="line">	--for condition=Established \</span><br><span class="line">	--all CustomResourceDefinition \</span><br><span class="line">	--namespace=monitoring</span><br><span class="line">kubectl apply -f manifests/</span><br><span class="line"></span><br><span class="line">3.修改收件人和发件人信息--设置告警媒介及参数</span><br><span class="line">kube-prometheus-0.11.0/manifestsalertmanager-secret.yaml: </span><br><span class="line">	里面记录了alertmanager的收件人和发件人信息。</span><br></pre></td></tr></table></figure>
+
+<h2 id="七、故障案例–生产中故障"><a href="#七、故障案例–生产中故障" class="headerlink" title="七、故障案例–生产中故障"></a>七、故障案例–生产中故障</h2><p>*** ops平台的监控看板是最直观的，有问题可以先通过看板进行日志排查排查</p>
+<h3 id="1-grafana监控看板无数据排查："><a href="#1-grafana监控看板无数据排查：" class="headerlink" title="1..grafana监控看板无数据排查："></a>1..grafana监控看板无数据排查：</h3><p>场景一：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">如果所有的监控节点无数据-----可能是prometheus的数据源有问题</span><br><span class="line">排查思路：</span><br><span class="line">1.在ksops运维平台---监控中心---监控概览----grafana的核心数据类别中查看数据源</span><br><span class="line">若没有数据源，则说明安装监控服务时数据源添加失败，这种情况下只能重装监控。。</span><br><span class="line">2. 在任意节点访问prometheus地址的健康接口查看其健康状态</span><br><span class="line">3.如果Prometheus服务异常，则需要查看日志，在ksops运维平台中--在监控中心--监控概览---点击prometheus右边的日志进行查看。。。</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260701024802816.png?x-oss-process=style/water"></p>
+<p>场景二：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">业务监控看板无数据： 大概率是pushgateway服务异常导致，因为业务监控数据都是通过push的方式主动推送到pushgateway的，如果pushgateway服务异常，prometheus拉取不到数据。从而业务监控看板无数据。</span><br><span class="line">排查思路：</span><br><span class="line">1.查看pushgateway服务器ip地址与端口</span><br><span class="line">打开ksops运维平台---监控中心---监控概览---滑动到下方查看pushgateway查看IP和端口。。。</span><br><span class="line">2.根据pushgateway地址到该节点上去请求api接口来获取健康状态。</span><br><span class="line"> curl -i http://x.x.x.x:9091/-/healthy</span><br><span class="line">用curl命令进行测试访问，若能访问到，则返回状态码200</span><br><span class="line">3.如果状态异常，则需查看pushgateway服务日志，根据日志进一步定位问题。</span><br><span class="line">4.如果状态正常，则可能是因为prometheus拉取pushgateway数据超时导致的。</span><br><span class="line">5.prometheus抓取pushgateway数据超时，通常是因为pushgateway上监控的数据太多导致的，此时会使得pushgateway和prometheus占用cpu,内存资源较高，有以下两种处理方法：</span><br><span class="line">1）临时解决：****⭐</span><br><span class="line">重启pushgateway,临时解决，但后续仍然会出现该问题。(因为pushgateway数据没有落盘，知识将监控数据临时存储到内存中，可进行重启临时解决).</span><br><span class="line">命令：到监控节点上执行  sudo docker restart pushgateway </span><br><span class="line">2)长期解决：****⭐</span><br><span class="line">⭐⭐在监控中心--监控概览--prometheus页面的总监控指标以及核心数据类别中的《监控指标》tab页面，根据指标名称top10和标签对top10两种维度的数据统计，可大致判断出是哪个服务上报的监控指标太多导致的，进一步再去找对应服务的研发排查。</span><br><span class="line">如果服务指标不多或者判断不出来那个服务，则可以先重启下pushgateway服务，等待五分钟后再次查看</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://blog-img-donggame6.oss-cn-hangzhou.aliyuncs.com/img/20260701025428026.png?x-oss-process=style/water"></p>
+<h3 id="2-cpu、内存、负载、TCP连接排查"><a href="#2-cpu、内存、负载、TCP连接排查" class="headerlink" title="2.cpu、内存、负载、TCP连接排查"></a>2.cpu、内存、负载、TCP连接排查</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">1.⭐⭐⭐某个服务进程占用较高资源</span><br><span class="line">打开grafana页面--节点监控--节点进程监控看板</span><br><span class="line">进行时间选择或者其他指标的选择，但到底是哪个服务</span><br><span class="line">2.⭐⭐⭐系统磁盘IO慢</span><br><span class="line">打开grafana页面--节点监控--节点聚合监控看板</span><br><span class="line">看在时间段内有无峰值</span><br><span class="line">3.⭐⭐⭐tcp链接数太多</span><br><span class="line">打开grafana页面--自定义监控-占用socket数</span><br><span class="line">tcp链接数图形只是一个趋势,没有具体服务所占连接数的信息</span><br><span class="line">告警自愈--tcp连接数---日志中查看详细信息</span><br></pre></td></tr></table></figure>
+
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>文章作者: </span><span class="post-copyright-info"><a href="https://donggame6.github.io/">donggame6</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>文章链接: </span><span class="post-copyright-info"><a href="https://donggame6.github.io/posts/77f87abc/">https://donggame6.github.io/posts/77f87abc/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>版权声明: </span><span class="post-copyright-info">本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="external nofollow noopener noreferrer">CC BY-NC-SA 4.0</a> 许可协议。转载请注明来源 <a href="https://donggame6.github.io" target="_blank">donggame6のblog</a>！</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/prometheus/">prometheus</a><a class="post-meta__tags" href="/tags/kubenetes/">kubenetes</a><a class="post-meta__tags" href="/tags/aletrmanager/">aletrmanager</a><a class="post-meta__tags" href="/tags/pushgateway/">pushgateway</a><a class="post-meta__tags" href="/tags/prometheus-operator/">prometheus-operator</a></div><div class="post-share"><div class="social-share" data-image="/img/104.jpg" data-sites="facebook,twitter,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc/sharejs/dist/js/social-share.min.js" defer></script></div></div><div class="post-reward"><div class="reward-button"><i class="fas fa-qrcode"></i>感谢您的支持！</div><div class="reward-main"><ul class="reward-all"><li class="reward-item"><a href="/img/wechat.jpg" target="_blank"><img class="post-qr-code-img" src="/img/wechat.jpg" alt="微信"></a><div class="post-qr-code-desc">微信</div></li></ul></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related" href="/posts/863af0be/" title="k8s使用ceph分布式集群存储"><img class="cover" src="/img/04.png" onerror="onerror=null;src='/img/06.jpg'" alt="cover of previous post"><div class="info"><div class="info-1"><div class="info-item-1">上一篇</div><div class="info-item-2">k8s使用ceph分布式集群存储</div></div><div class="info-2"><div class="info-item-1">本章主要介绍了ceph集群部署及扩容和缩容osd节点，并在生产中对接kubernetes，实现业务更轻量级存储。</div></div></div></a><a class="pagination-related" href="/posts/77f87ebd/" title="阿里云oss+PicGo实现图片自动上传到图床"><img class="cover" src="/img/104.jpg" onerror="onerror=null;src='/img/06.jpg'" alt="cover of next post"><div class="info text-right"><div class="info-1"><div class="info-item-1">下一篇</div><div class="info-item-2">阿里云oss+PicGo实现图片自动上传到图床</div></div><div class="info-2"><div class="info-item-1">文章介绍如何通过阿里云OSS和PicGo工具实现markdown笔记的图片自动上传。步骤包括：OSS存储桶创建、API密钥获取、权限设置（含时间戳重>命名防冲突），以及PicGo的安装与设置。详细说明了手动/自动上传图片的操作方法，并配有多张界面截图，帮助用户无缝衔接本地写作与云端图床管>理，提升Markdown文档的图片管理效率。</div></div></div></a></nav></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/02.jpg" onerror="this.onerror=null;this.src='/img/05.jpg'" alt="avatar"></div><div class="author-info-name">donggame6</div><div class="author-info-description">专注于云计算技术研究</div><div class="site-data"><a href="/archives/"><div class="headline">文章</div><div class="length-num">6</div></a><a href="/tags/"><div class="headline">标签</div><div class="length-num">13</div></a><a href="/categories/"><div class="headline">分类</div><div class="length-num">7</div></a></div><a id="card-info-btn" href="https://donggame6.github.io/"><i class="fab fa-github"></i><span>Follow Me</span></a><div class="card-info-social-icons"><a class="social-icon" href="https://github.com/donggame6" target="_blank" title="Github" rel="external nofollow noopener noreferrer"><i class="fab fa-github" style="color: #8a2be2;"></i></a><a class="social-icon" href="https://blog.csdn.net/qq_59826161" target="_blank" title="CSDN" rel="external nofollow noopener noreferrer"><i class="fa-solid fa-code" style="color: #8a2be2;"></i></a><a class="social-icon" href="https://www.xiaohongshu.com/user/profile/5f06cc0900000000010046d2" target="_blank" title="redbook" rel="external nofollow noopener noreferrer"><i class="fa-solid fa-book" style="color: #8a2be2;"></i></a><a class="social-icon" href="https://space.bilibili.com/3494349446842952" target="_blank" title="bilibili" rel="external nofollow noopener noreferrer"><i class="fab fa-bilibili" style="color: #8a2be2;"></i></a></div></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>公告</span></div><div class="announcement_content"><style>
+.announcement-card {
+    --main-color: #ff00ff;
+    --secondary-color: #00ffff;
+    --highlight-color: #ff5500;
+    position: relative;
+    overflow: hidden;
+}
+.announcement-content {
+    font-size: 1rem; 
+    line-height: 1.2; 
+    color: #ffffff;
+    position: relative;
+}
+.keyword {
+    color: var(--secondary-color);
+    font-weight: 300;
+    font-size: 1.1rem; 
+}
+.highlight {
+    color: var(--main-color);
+    font-weight: 1000;
+    font-size: 1.2rem; 
+}
+.announcement-content ul {
+    list-style-type: none;
+    margin: 0.8rem 0; 
+    padding-left: 1.5rem;   
+}
+</style>
+<div class="announcement-card">
+    <div class="announcement-content">
+        <p><span class="highlight">云中云计算研习录</span>！🎉</p>
+        <p><strong>本平台专注于：</strong></p>
+        <ul>
+            <li><span class="keyword">> 云原生k8s研习</span></li>
+            <li><span class="keyword">> 容器docker研习</span></li>
+            <li><span class="keyword">> 网络安全分析</span></li>
+            <li><span class="keyword">> 运维故障分析</span></li>
+        </ul>
+        <p>🌟 <strong>加入我们，一起探索运维奥秘，提升业务容器全面自动化能力，共同创造美好世界！</strong></p>
+    </div>
+</div>
+</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>目录</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E4%BC%81%E4%B8%9A%E7%BA%A7Prometheus%E7%9B%91%E6%8E%A7%E7%B3%BB%E7%BB%9F%E7%9A%84%E4%BD%BF%E7%94%A8%E5%8E%9F%E7%90%86%E5%8F%8A%E6%95%85%E9%9A%9C"><span class="toc-number">1.</span> <span class="toc-text">企业级Prometheus监控系统的使用原理及故障</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E7%9B%91%E6%8E%A7%E5%8E%9F%E7%90%86%E5%8F%8A%E6%A0%B8%E5%BF%83%E5%85%B3%E6%B3%A8%E7%82%B9"><span class="toc-number">1.1.</span> <span class="toc-text">一、监控原理及核心关注点</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E8%A6%81%E4%BD%BF%E7%94%A8Prometheus"><span class="toc-number">1.1.1.</span> <span class="toc-text">为什么要使用Prometheus</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#Prometheus%E6%9E%B6%E6%9E%84%E5%9B%BE%E8%A7%A3"><span class="toc-number">1.1.2.</span> <span class="toc-text">Prometheus架构图解</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81%E7%9B%91%E6%8E%A7%E7%BB%84%E4%BB%B6%E7%9A%84%E9%83%A8%E7%BD%B2"><span class="toc-number">1.2.</span> <span class="toc-text">二、监控组件的部署</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-%E4%BA%8C%E8%BF%9B%E5%88%B6%E9%83%A8%E7%BD%B2prometheus-server"><span class="toc-number">1.2.1.</span> <span class="toc-text">1. 二进制部署prometheus-server</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#1-1-%E4%B8%8B%E8%BD%BD%E4%BA%8C%E8%BF%9B%E5%88%B6%E5%8C%85"><span class="toc-number">1.2.1.1.</span> <span class="toc-text">1.1 下载二进制包</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#1-2-%E5%88%9B%E5%BB%BA%E5%B7%A5%E4%BD%9C%E7%9B%AE%E5%BD%95%E8%A7%A3%E5%8E%8B%E5%8F%8A%E5%90%AF%E5%8A%A8"><span class="toc-number">1.2.1.2.</span> <span class="toc-text">1.2 创建工作目录解压及启动</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#1-3-%E8%AE%BE%E7%BD%AE%E4%B8%BA%E5%BC%80%E6%9C%BA%E8%87%AA%E5%90%AF"><span class="toc-number">1.2.1.3.</span> <span class="toc-text">1.3 设置为开机自启</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-docker%E4%B8%80%E9%94%AE%E9%83%A8%E7%BD%B2prometheus-server%E2%80%93%E6%AD%A5%E9%AA%A4%E7%B1%BB%E4%BC%BC"><span class="toc-number">1.2.2.</span> <span class="toc-text">2. docker一键部署prometheus server–步骤类似</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-%E4%BA%8C%E8%BF%9B%E5%88%B6%E9%83%A8%E7%BD%B2node-exporter-%E4%BB%A5%E4%B8%8B%E4%B8%8D%E5%9C%A8%E8%AF%A6%E7%BB%86%E8%BE%93%E5%87%BA%EF%BC%8C%E4%B8%8Eserver%E7%AB%AF%E5%90%8C%E7%90%86%E3%80%82"><span class="toc-number">1.2.3.</span> <span class="toc-text">3. 二进制部署node-exporter-以下不在详细输出，与server端同理。</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-%E5%9F%BA%E4%BA%8Edocker%E9%83%A8%E7%BD%B2node-exporter"><span class="toc-number">1.2.4.</span> <span class="toc-text">4. 基于docker部署node-exporter</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#5-prometheus-server%E7%9B%91%E6%8E%A7node-exporter"><span class="toc-number">1.2.5.</span> <span class="toc-text">5. prometheus-server监控node-exporter</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81PromQL%E7%9A%84%E5%B8%B8%E7%94%A8%E5%87%BD%E6%95%B0%EF%BC%8C%E5%B8%B8%E7%94%A8%E6%9C%8D%E5%8A%A1%E7%9B%91%E6%8E%A7%EF%BC%8C%E6%9C%8D%E5%8A%A1%E5%8F%91%E7%8E%B0%E5%8F%8A%E9%85%8D%E7%BD%AE%E8%81%94%E9%82%A6%E6%A8%A1%E5%BC%8F"><span class="toc-number">1.3.</span> <span class="toc-text">三、PromQL的常用函数，常用服务监控，服务发现及配置联邦模式</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-PromQL%E7%9A%84%E5%B8%B8%E7%94%A8%E5%87%BD%E6%95%B0"><span class="toc-number">1.3.1.</span> <span class="toc-text">1.PromQL的常用函数</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-%E5%B8%B8%E7%94%A8%E6%9C%8D%E5%8A%A1%E7%9B%91%E6%8E%A7%EF%BC%88zookeeper%EF%BC%8Ckafka%E9%9B%86%E7%BE%A4-ElasticSearch%E9%9B%86%E7%BE%A4%EF%BC%8Cnginx-redis-tomcat%E2%80%A6"><span class="toc-number">1.3.2.</span> <span class="toc-text">2. 常用服务监控（zookeeper，kafka集群,ElasticSearch集群，nginx,redis,tomcat…)</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#3-%E9%85%8D%E7%BD%AE%E6%9C%8D%E5%8A%A1%E5%8F%91%E7%8E%B0"><span class="toc-number">1.3.3.</span> <span class="toc-text">3. 配置服务发现</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#4-%E9%85%8D%E7%BD%AE%E8%81%94%E9%82%A6%E6%A8%A1%E5%BC%8F"><span class="toc-number">1.3.4.</span> <span class="toc-text">4.配置联邦模式</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%94%E3%80%81prometheus%E6%9C%AC%E5%9C%B0%E5%AD%98%E5%82%A8%E5%92%8C%E8%BF%9C%E7%AB%AF%E5%AD%98%E5%82%A8%EF%BC%8Cpushgateway%E5%92%8Caltermanager"><span class="toc-number">1.4.</span> <span class="toc-text">五、prometheus本地存储和远端存储，pushgateway和altermanager</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#1-%E6%9C%AC%E5%9C%B0%E5%AD%98%E5%82%A8%EF%BC%9A%E5%90%AF%E5%8A%A8%E8%84%9A%E6%9C%AC%E4%B8%AD%E5%AE%9A%E4%B9%89%E6%89%80%E9%9C%80%E8%A6%81%E7%9A%84%E5%8F%82%E6%95%B0%E5%8D%B3%E5%8F%AF%E3%80%82"><span class="toc-number">1.4.0.1.</span> <span class="toc-text">1. 本地存储：启动脚本中定义所需要的参数即可。</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#2-%E8%BF%9C%E7%AB%AF%E5%AD%98%E5%82%A8%EF%BC%9AVictoriaMetrics"><span class="toc-number">1.4.0.2.</span> <span class="toc-text">2.远端存储：VictoriaMetrics</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#3-pushgateway%E7%BB%84%E4%BB%B6"><span class="toc-number">1.4.0.3.</span> <span class="toc-text">3.pushgateway组件</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#4-altermanager-%E7%BB%84%E4%BB%B6"><span class="toc-number">1.4.0.4.</span> <span class="toc-text">4.altermanager 组件</span></a></li></ol></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%85%AD%E3%80%81prometueus-operator%E7%9B%91%E6%8E%A7k8s%E9%9B%86%E7%BE%A4"><span class="toc-number">1.5.</span> <span class="toc-text">六、prometueus-operator监控k8s集群</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%83%E3%80%81%E6%95%85%E9%9A%9C%E6%A1%88%E4%BE%8B%E2%80%93%E7%94%9F%E4%BA%A7%E4%B8%AD%E6%95%85%E9%9A%9C"><span class="toc-number">1.6.</span> <span class="toc-text">七、故障案例–生产中故障</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#1-grafana%E7%9B%91%E6%8E%A7%E7%9C%8B%E6%9D%BF%E6%97%A0%E6%95%B0%E6%8D%AE%E6%8E%92%E6%9F%A5%EF%BC%9A"><span class="toc-number">1.6.1.</span> <span class="toc-text">1..grafana监控看板无数据排查：</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#2-cpu%E3%80%81%E5%86%85%E5%AD%98%E3%80%81%E8%B4%9F%E8%BD%BD%E3%80%81TCP%E8%BF%9E%E6%8E%A5%E6%8E%92%E6%9F%A5"><span class="toc-number">1.6.2.</span> <span class="toc-text">2.cpu、内存、负载、TCP连接排查</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>最新文章</span></div><div class="aside-list"><div class="aside-list-item"><a class="thumbnail" href="/posts/863af0be/" title="k8s使用ceph分布式集群存储"><img src="/img/04.png" onerror="this.onerror=null;this.src='/img/06.jpg'" alt="k8s使用ceph分布式集群存储"></a><div class="content"><a class="title" href="/posts/863af0be/" title="k8s使用ceph分布式集群存储">k8s使用ceph分布式集群存储</a><time datetime="2026-06-27T20:52:00.000Z" title="发表于 2026-06-28 04:52:00">2026-06-28</time></div></div><div class="aside-list-item"><a class="thumbnail" href="/posts/77f87abc/" title="企业中Prometheus监控系统的使用原理及故障"><img src="/img/104.jpg" onerror="this.onerror=null;this.src='/img/06.jpg'" alt="企业中Prometheus监控系统的使用原理及故障"></a><div class="content"><a class="title" href="/posts/77f87abc/" title="企业中Prometheus监控系统的使用原理及故障">企业中Prometheus监控系统的使用原理及故障</a><time datetime="2024-08-30T04:52:00.000Z" title="发表于 2024-08-30 12:52:00">2024-08-30</time></div></div><div class="aside-list-item"><a class="thumbnail" href="/posts/77f87ebd/" title="阿里云oss+PicGo实现图片自动上传到图床"><img src="/img/104.jpg" onerror="this.onerror=null;this.src='/img/06.jpg'" alt="阿里云oss+PicGo实现图片自动上传到图床"></a><div class="content"><a class="title" href="/posts/77f87ebd/" title="阿里云oss+PicGo实现图片自动上传到图床">阿里云oss+PicGo实现图片自动上传到图床</a><time datetime="2024-05-12T06:30:00.000Z" title="发表于 2024-05-12 14:30:00">2024-05-12</time></div></div></div></div></div></div></main><footer id="footer" style="background-color: rgba(45, 10, 61, 0.2);"><div class="footer-other"><div class="footer-copyright"></div><div class="footer_custom_text"><style>
+  .footer {
+    text-align: center;
+    position: relative;
+  }
+  .social-links {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .social-links i {
+    color: #8400ff;
+  }
+  .social-link {
+    color: #8a2be2;
+    font-size: 1.2rem;
+    transition: all 0.3s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    background: rgba(138, 43, 226, 0.1);
+  }
+  .social-link:hover {
+    color: #892be294;
+    background: #892be294;
+    transform: translateY(-3px) scale(1.2);
+    box-shadow: 0 5px 15px rgba(138, 43, 226, 0.4);
+    text-decoration: none !important; 
+  }
+  .footer p {
+    margin: 0.5rem 0;
+    line-height: 1;
+  }
+  .copyright {
+    font-size: 1.1rem; 
+    color: #c08bdf;
+    font-weight: 400;
+  }
+  .tagline {
+    font-size: 0.8rem;
+    color: #8a2be2;
+    font-style: italic;
+    font-weight: 500;
+  }
+  .visitor-count {
+    font-size: 0.75rem;
+    color: rgba(219, 142, 255, 0.658);
+    font-weight: 300;
+  }
+  #visitorCount {
+    font-weight: bold;
+  }
+</style>
+<div class="footer">
+  <div class="social-links">
+    <a href="https://github.com/donggame6" class="social-link" target="_blank" rel="external nofollow noopener noreferrer" aria-label="GitHub" title="GitHub">
+      <i class="fab fa-github"></i>
+    </a>
+    <a href="https://blog.csdn.net/qq_59826161" class="social-link" target="_blank" rel="external nofollow noopener noreferrer" aria-label="CSDN" title="CSDN">
+      <i class="fas fa-code"></i>
+    </a>
+    <a href="https://www.xiaohongshu.com/user/profile/5f06cc0900000000010046d2" class="social-link" target="_blank" rel="external nofollow noopener noreferrer" aria-label="小红书" title="小红书">
+      <i class="fas fa-book"></i>
+    </a>
+    <a href="https://space.bilibili.com/3494349446842952" class="social-link" target="_blank" rel="external nofollow noopener noreferrer" aria-label="bilibili" title="bilibili">
+      <i class="fab fa-bilibili"></i>
+    </a>
+  </div>
+  <p class="copyright">© 2023 donggame6のblog - 所有权利保留</p>
+  <p class="tagline">> Learning is endless <</p>
+  <p class="visitor-count">访问量: <span id="visitorCount">1024</span> | 你是第 <span id="dailyVisitor">1</span> 位今日访客</p>
+</div>
+<script>
+  // 确保DOM加载完成后执行
+  document.addEventListener('DOMContentLoaded', function() {
+    // 模拟访问量增长
+    function updateVisitorCount() {
+      const countElement = document.getElementById('visitorCount');
+      let count = parseInt(countElement.textContent) || 1024;
+      // 从localStorage获取或初始化计数
+      const storedCount = localStorage.getItem('totalVisitors');
+      if (storedCount) {
+        count = parseInt(storedCount);
+        countElement.textContent = count;
+      }
+      // 每日访客计数
+      const today = new Date().toDateString();
+      const dailyData = JSON.parse(localStorage.getItem('dailyVisitors') || '{"date":"", "count":0}');
+      if (dailyData.date !== today) {
+        dailyData.date = today;
+        dailyData.count = 0;
+      }
+      dailyData.count += 1;
+      document.getElementById('dailyVisitor').textContent = dailyData.count;
+      localStorage.setItem('dailyVisitors', JSON.stringify(dailyData));
+      // 每30秒随机增加访问量
+      setInterval(() => {
+        count += Math.floor(Math.random() * 3);
+        countElement.textContent = count;
+        localStorage.setItem('totalVisitors', count.toString());
+      }, 30000);
+    }
+    updateVisitorCount();
+    // 添加点击动画效果
+    const socialLinks = document.querySelectorAll('.social-link');
+    socialLinks.forEach(link => {
+      link.addEventListener('click', function() {
+        this.style.transform = 'scale(0.9)';
+        setTimeout(() => {
+          this.style.transform = '';
+        }, 300);
+      });
+    });
+  });
+</script>
+</div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="阅读模式"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="日间和夜间模式切换"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="单栏和双栏切换"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="设置"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="目录"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="回到顶部"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js"></script><script src="/js/main.js"></script><div class="js-pjax"></div><script defer src="/js/cursor.js"></script><script defer src="/js/sakura.js"></script><script src="/live2d-widget/autoload.js"></script><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script><div id="local-search"><div class="search-dialog"><nav class="search-nav"><span class="search-dialog-title">搜索</span><i class="fas fa-spinner fa-pulse" id="loading-status" hidden="hidden"></i><button class="search-close-button"><i class="fas fa-times"></i></button></nav><div class="text-center" id="loading-database"><i class="fas fa-spinner fa-pulse"></i><span>  数据加载中</span></div><div class="local-search-input"><input placeholder="输入关键词…" type="text"></div><hr><div id="local-search-results"></div><div class="ais-Pagination" id="local-search-pagination" style="display:none;"><ul class="ais-Pagination-list"></ul></div><div id="local-search-stats"></div></div><div id="search-mask"></div><script src="/js/search/local-search.js"></script></div></div><!-- hexo injector body_end start --><script data-pjax>
+  function butterfly_categories_card_injector_config(){
+    // 检查容器是否存在
+    var parent_div_git = document.getElementById('recent-posts');
+    // 如果容器不存在，则动态创建
+    if (!parent_div_git) {
+      console.warn('butterfly_categories_card: 挂载容器不存在，正在动态创建...');
+      // 创建新容器（默认插入到页面主体顶部）
+      parent_div_git = document.createElement('div');
+      parent_div_git.id = 'recent-posts'; // 赋予配置的ID
+      document.querySelector('#page').prepend(parent_div_git); // 插入到 #content-inner 内
+    }
+    var item_html = '<style>li.categoryBar-list-item{width:32.3%;}.categoryBar-list{max-height: 950px;overflow:auto;}.categoryBar-list::-webkit-scrollbar{width:0!important}@media screen and (max-width: 650px){.categoryBar-list{max-height: 800px;}}</style><div class="recent-post-item" style="height:auto;width:100%;padding:0px;"><div id="categoryBar"><ul class="categoryBar-list"><li class="categoryBar-list-item" style="background:url(/img/11.png);"> <a class="categoryBar-list-link" href="/categories/博客搭建/">博客搭建</a><span class="categoryBar-list-count">3</span><span class="categoryBar-list-descr">1</span></li><li class="categoryBar-list-item" style="background:url(/img/12.png);"> <a class="categoryBar-list-link" href="/categories/容器存储/">容器存储</a><span class="categoryBar-list-count">1</span><span class="categoryBar-list-descr">2</span></li><li class="categoryBar-list-item" style="background:url(/img/13.png);"> <a class="categoryBar-list-link" href="/categories/监控/">监控</a><span class="categoryBar-list-count">1</span><span class="categoryBar-list-descr">3</span></li><li class="categoryBar-list-item" style="background:url(/img/14.png);"> <a class="categoryBar-list-link" href="/categories/测试/">测试</a><span class="categoryBar-list-count">1</span><span class="categoryBar-list-descr">4</span></li><li class="categoryBar-list-item" style="background:url(/img/15.png);"> <a class="categoryBar-list-link" href="/categories/监控/kubenetes/">kubenetes</a><span class="categoryBar-list-count">1</span><span class="categoryBar-list-descr">5</span></li><li class="categoryBar-list-item" style="background:url(/img/16.png);"> <a class="categoryBar-list-link" href="/categories/监控/kubenetes/prometheus/">prometheus</a><span class="categoryBar-list-count">1</span><span class="categoryBar-list-descr">6</span></li><li class="categoryBar-list-item" style="background:url(/img/17.png);"> <a class="categoryBar-list-link" href="/categories/监控/kubenetes/prometheus/docker/">docker</a><span class="categoryBar-list-count">1</span><span class="categoryBar-list-descr">7</span></li></ul></div></div>';
+    console.log('已挂载 butterfly_categories_card');
+    parent_div_git.insertAdjacentHTML("afterbegin",item_html)
+  }
+  // 路径匹配逻辑（使用 startsWith）
+  if (location.pathname.startsWith('/categories/') || '/categories/' === 'all') {
+    butterfly_categories_card_injector_config();
+  }
+  </script><script data-pjax>
+  function butterfly_swiper_injector_config(){
+    var parent_div_git = document.getElementById('recent-posts');
+    var item_html = '<div class="recent-post-item" style="height: auto;width: 100%"><div class="blog-slider swiper-container-fade swiper-container-horizontal" id="swiper_container"><div class="blog-slider__wrp swiper-wrapper" style="transition-duration: 0ms;"><div class="blog-slider__item swiper-slide" style="width: 750px; opacity: 1; transform: translate3d(0px, 0px, 0px); transition-duration: 0ms;"><a class="blog-slider__img" href="posts/8ac25d19/" alt=""><img width="48" height="48" src="/img/106.jpeg" alt="" onerror="this.src=https://unpkg.zhimg.com/akilar-candyassets/image/loading.gif; this.onerror = null;"/></a><div class="blog-slider__content"><span class="blog-slider__code">2023-12-30</span><a class="blog-slider__title" href="posts/8ac25d19/" alt="">Hexo Butterfly主题整体结构解析</a><div class="blog-slider__text">全面解析Butterfly主题的模块化目录结构，从根目录的配置文件（_config.yml、plugins.yml）到核心功能模块（布局文件、样式脚本、静态资源）逐一说明。重点标注了layout/下的Pug模板组件（如头部、侧边栏、评论系统）、source/中的CSS/JS定制入口，以及scripts/的事件处理逻辑。适合开发者深度定制主题时快速定位文件，理解各模块的依赖关系与修改影响。</div><a class="blog-slider__button" href="posts/8ac25d19/" alt="">详情   </a></div></div><div class="blog-slider__item swiper-slide" style="width: 750px; opacity: 1; transform: translate3d(0px, 0px, 0px); transition-duration: 0ms;"><a class="blog-slider__img" href="posts/77f87ebd/" alt=""><img width="48" height="48" src="/img/104.jpg" alt="" onerror="this.src=https://unpkg.zhimg.com/akilar-candyassets/image/loading.gif; this.onerror = null;"/></a><div class="blog-slider__content"><span class="blog-slider__code">2024-05-12</span><a class="blog-slider__title" href="posts/77f87ebd/" alt="">阿里云oss+PicGo实现图片自动上传到图床</a><div class="blog-slider__text">文章介绍如何通过阿里云OSS和PicGo工具实现markdown笔记的图片自动上传。步骤包括：OSS存储桶创建、API密钥获取、权限设置（含时间戳重&gt;命名防冲突），以及PicGo的安装与设置。详细说明了手动/自动上传图片的操作方法，并配有多张界面截图，帮助用户无缝衔接本地写作与云端图床管&gt;理，提升Markdown文档的图片管理效率。</div><a class="blog-slider__button" href="posts/77f87ebd/" alt="">详情   </a></div></div><div class="blog-slider__item swiper-slide" style="width: 750px; opacity: 1; transform: translate3d(0px, 0px, 0px); transition-duration: 0ms;"><a class="blog-slider__img" href="posts/77f87abc/" alt=""><img width="48" height="48" src="/img/104.jpg" alt="" onerror="this.src=https://unpkg.zhimg.com/akilar-candyassets/image/loading.gif; this.onerror = null;"/></a><div class="blog-slider__content"><span class="blog-slider__code">2024-08-30</span><a class="blog-slider__title" href="posts/77f87abc/" alt="">企业中Prometheus监控系统的使用原理及故障</a><div class="blog-slider__text">文章介绍企业级如何采用Prometheus采用Pull拉取模式定时抓取各节点Exporter指标，数据如何存储，存储选择，依靠PromQL完成查询与告警推送，监控kuberbets集群业务，保证业务稳定运行不宕机，日常故障多集中于目标连通性异常、采集超时、存储区块损坏、规则配置错误及Grafana数据源对接失败。</div><a class="blog-slider__button" href="posts/77f87abc/" alt="">详情   </a></div></div><div class="blog-slider__item swiper-slide" style="width: 750px; opacity: 1; transform: translate3d(0px, 0px, 0px); transition-duration: 0ms;"><a class="blog-slider__img" href="posts/ec335aec/" alt=""><img width="48" height="48" src="/img/102.jpeg" alt="" onerror="this.src=https://unpkg.zhimg.com/akilar-candyassets/image/loading.gif; this.onerror = null;"/></a><div class="blog-slider__content"><span class="blog-slider__code">2023-11-28</span><a class="blog-slider__title" href="posts/ec335aec/" alt="">利用Github和hexo搭建自己的个人博客</a><div class="blog-slider__text">该教程详细指导用户从零开始搭建Hexo博客并部署到GitHub。内容涵盖Git、Node.js环境安装，Hexo框架初始化，主题安装（以Amazing主题为例），以及GitHub仓库创建与SSH密钥配置。通过图文并茂的步骤演示了本地测试、主题配置、依赖安装和最终部署流程。重点解决了国内用户使用npm速度慢的问题（推荐cnpm），并提供了常见问题的解决方案，如环境变量配置和SSH认证测试，适合新手快速搭建个人技术博客。</div><a class="blog-slider__button" href="posts/ec335aec/" alt="">详情   </a></div></div></div><div class="blog-slider__pagination swiper-pagination-clickable swiper-pagination-bullets"></div></div></div>';
+    console.log('已挂载butterfly_swiper')
+    parent_div_git.insertAdjacentHTML("afterbegin",item_html)
+    }
+  var elist = 'undefined'.split(',');
+  var cpage = location.pathname;
+  var epage = '/';
+  var flag = 0;
+
+  for (var i=0;i<elist.length;i++){
+    if (cpage.includes(elist[i])){
+      flag++;
+    }
+  }
+
+  if ((epage ==='all')&&(flag == 0)){
+    butterfly_swiper_injector_config();
+  }
+  else if (epage === cpage){
+    butterfly_swiper_injector_config();
+  }
+  </script><script defer src="https://npm.elemecdn.com/hexo-butterfly-swiper/lib/swiper.min.js"></script><script defer data-pjax src="https://npm.elemecdn.com/hexo-butterfly-swiper/lib/swiper_init.js"></script><!-- hexo injector body_end end --></body></html>
